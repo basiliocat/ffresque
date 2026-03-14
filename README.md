@@ -98,39 +98,7 @@ Disabled by default. When enabled, files where every block has already been read
 python3 ffresque.py status [--db blocks.db]
 ```
 
-Prints recovery statistics from the database: total/complete/damaged file counts, top 10 worst files, and overall recovery rate.
-
-## Output
-
-### Starting banner
-
-```
-=== Starting ===
-Files in list: 4251
-Already complete: 3800
-To process: 451
-Bad blocks to retry: 678 (84.8 MiB)
-```
-
-### Progress (overwrites in-place on TTY)
-
-```
-  [200/4251] 5% | 3m45s, ETA 10m24s | +1234 ok, +56 bad (4.3%), +45 complete
-```
-
-### Session summary
-
-```
-=== Session Summary (12m05s) ===
-Files in list: 4251
-Skipped: 3800
-Blocks read OK (this session): 1234 (154.2 MiB)
-Blocks still bad: 56 (7.0 MiB)
-Files fully recovered: 4195/4251
-Files with remaining bad blocks: 56
-New files completed this session: 395
-  (moved to /mnt/recovery/recovered)
-```
+Prints recovery statistics from the database: total/complete/damaged file counts, top 10 most damaged files, and overall recovery rate.
 
 ## Recovery from multiple sources
 
@@ -155,6 +123,19 @@ python3 ffresque.py copy \
 ```
 
 After both runs, files where the two disks had bad blocks at different offsets will be fully recovered.
+
+## Use cases
+
+- **Dying HDD with bad sectors** — copy photos, documents, and videos off a failing hard drive before it dies completely. Unlike `cp` or `rsync`, ffresque won't hang on unreadable sectors.
+- **Degraded RAID1 / ZFS mirror** — one disk is dead, the surviving disk has scattered bad sectors. Run ffresque on disk A, then swap to disk B and re-run — bad sectors at different offsets get filled in from the other disk.
+- **ZFS / BTRFS pool with data errors** — `zpool status` or `btrfs scrub` reports checksum errors. Mount the pool readonly and rescue files block by block.
+- **NAS data recovery** — old Synology / QNAP / TrueNAS with degraded array. Pull the disks, mount them on a Linux box, and rescue what you can.
+- **Disk image recovery** — working with `dd` images of damaged disks via loopback mount. ffresque handles I/O errors from the image transparently.
+- **SD card / CF card / USB flash drive** — corrupted camera card or flash drive with unreadable sectors. Recover as many photos as possible.
+- **rsync fails with I/O error** — `rsync: read errors mapping: Input/output error`. ffresque skips bad blocks instead of aborting the entire file.
+- **Partial file recovery** — even if some blocks are permanently lost, the rest of the file is saved. For media files (JPEG, MP4) this often means most of the content is still usable.
+- **Combining multiple backup copies** — you have several old backups of the same directory tree, each with different corruptions. Run ffresque against each source to assemble the most complete version.
+- **Pre-migration rescue** — before decommissioning an old server or array, copy everything off with block-level tracking so you know exactly what was and wasn't recovered.
 
 ## Testing
 
