@@ -368,6 +368,25 @@ class TestMoveToDst:
 # ── human_size ──────────────────────────────────────────────────────
 
 
+class TestFormatDuration:
+    @pytest.mark.parametrize(
+        "seconds, expected",
+        [
+            (0, "0s"),
+            (45, "45s"),
+            (59, "59s"),
+            (60, "1m00s"),
+            (90, "1m30s"),
+            (3599, "59m59s"),
+            (3600, "1h00m"),
+            (3661, "1h01m"),
+            (7200, "2h00m"),
+        ],
+    )
+    def test_format_duration(self, seconds, expected):
+        assert zbc.format_duration(seconds) == expected
+
+
 class TestHumanSize:
     @pytest.mark.parametrize(
         "nbytes, expected",
@@ -452,3 +471,101 @@ class TestCmdCopy:
 
         assert (tmp.dst / "x.bin").read_bytes() == b"X" * 512
         assert (tmp.dst / "sub" / "y.bin").read_bytes() == b"Y" * 256
+
+    def test_done_file_no_duplicates_on_rerun(self, tmp):
+        """Re-run should not re-append already completed files to done-file."""
+        write_src(tmp, "f.bin", b"F" * 512)
+        write_bad_files(tmp, ["f.bin"])
+
+        class Args:
+            src = str(tmp.src)
+            work_dir = str(tmp.work)
+            dst = str(tmp.dst)
+            bad_files = tmp.bad_files
+            block_size = 1024
+            db = tmp.db
+            done_file = tmp.done
+            skip_existing = True
+            skip_bad_blocks = False
+
+        zbc.cmd_copy(Args())
+        zbc.cmd_copy(Args())
+
+        lines = open(tmp.done).read().splitlines()
+        assert lines.count("f.bin") == 1
+
+
+# ── scan_src ────────────────────────────────────────────────────────
+
+
+class TestScanSrc:
+    def test_finds_all_files_recursively(self, tmp):
+        write_src(tmp, "a.txt", b"a")
+        write_src(tmp, "d1/b.txt", b"b")
+        write_src(tmp, "d1/d2/c.txt", b"c")
+
+        result = zbc.scan_src(str(tmp.src))
+        assert sorted(result) == ["a.txt", "d1/b.txt", "d1/d2/c.txt"]
+
+    def test_empty_directory(self, tmp):
+        assert zbc.scan_src(str(tmp.src)) == []
+
+
+# ── cmd_status ──────────────────────────────────────────────────────
+
+
+class TestCmdStatus:
+    def test_status_output(self, tmp, capsys):
+        """Status prints correct stats from DB."""
+        conn = zbc.open_db(tmp.db)
+        zbc.upsert_file(conn, "good.bin", 2048, 2, 2, 0)
+        zbc.upsert_file(conn, "partial.bin", 4096, 4, 3, 1)
+        zbc.upsert_block(conn, "partial.bin", 3, "bad")
+        conn.commit()
+        conn.close()
+
+        class Args:
+            db = tmp.db
+
+        zbc.cmd_status(Args())
+        out = capsys.readouterr().out
+
+        assert "Total files: 2" in out
+        assert "Fully recovered (complete): 1" in out
+        assert "With bad blocks: 1" in out
+        assert "partial.bin" in out
+        assert "Recovery rate:" in out
+
+    def test_status_missing_db(self, tmp):
+        """Status exits with error for missing DB."""
+
+        class Args:
+            db = str(tmp.dst / "nonexistent.db")
+
+        with pytest.raises(SystemExit):
+            zbc.cmd_status(Args())
+
+
+# ── Work file edge cases ────────────────────────────────────────────
+
+
+class TestWorkFileResize:
+    def test_existing_work_file_resized(self, tmp):
+        """If work file exists with wrong size, it gets resized."""
+        data = b"Q" * 2048
+        write_src(tmp, "resize.bin", data)
+
+        # Pre-create work file with wrong size
+        work_path = tmp.work / "resize.bin"
+        work_path.write_bytes(b"\x00" * 999)
+
+        conn = zbc.open_db(tmp.db)
+        ok, bad, complete, skipped = zbc.process_file(
+            "resize.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
+        )
+        conn.commit()
+        conn.close()
+
+        assert ok == 2
+        assert complete is True
+        assert (tmp.dst / "resize.bin").read_bytes() == data
