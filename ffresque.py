@@ -8,6 +8,7 @@ retries blocks previously marked as bad.
 """
 
 import argparse
+import collections
 import math
 import os
 import shutil
@@ -277,6 +278,8 @@ def cmd_copy(args):
     session_new_complete = []
     commit_interval = 100
     is_tty = sys.stderr.isatty()
+    # Sliding window for ETA: track (timestamp, file_index) at each checkpoint
+    eta_window = collections.deque(maxlen=10)
 
     t0 = time.monotonic()
 
@@ -300,12 +303,22 @@ def cmd_copy(args):
 
         if i % commit_interval == 0:
             conn.commit()
-            elapsed = time.monotonic() - t0
+            now = time.monotonic()
+            elapsed = now - t0
             pct = 100.0 * i / total_files
-            if elapsed > 0 and i < total_files:
-                eta_str = f", ETA {format_duration(elapsed * (total_files - i) / i)}"
-            else:
-                eta_str = ""
+
+            # ETA from sliding window
+            eta_window.append((now, i))
+            eta_str = ""
+            if len(eta_window) >= 2 and i < total_files:
+                wt0, wi0 = eta_window[0]
+                dt = now - wt0
+                di = i - wi0
+                if dt > 0 and di > 0:
+                    rate = di / dt  # files per second
+                    eta = (total_files - i) / rate
+                    eta_str = f", ETA {format_duration(eta)}"
+
             total_session = session_ok_blocks + session_bad_blocks
             bad_pct = f" ({100.0 * session_bad_blocks / total_session:.1f}%)" if total_session > 0 else ""
             line = (f"  [{i}/{total_files}] {pct:.0f}% | "
