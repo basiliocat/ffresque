@@ -1,3 +1,5 @@
+**English** | [Русский](README.ru.md)
+
 # ffresque
 
 Block-level file rescue from damaged media.
