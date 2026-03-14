@@ -270,7 +270,8 @@ def cmd_copy(args):
     print(f"Already complete: {prev_complete_in_list}")
     print(f"To process: {files_to_process}")
     if prev_bad_blocks > 0:
-        print(f"Bad blocks to retry: {prev_bad_blocks} ({human_size(prev_bad_blocks * block_size)})")
+        skip_note = " (skipped)" if args.skip_bad_blocks else ""
+        print(f"Bad blocks to retry: {prev_bad_blocks} ({human_size(prev_bad_blocks * block_size)}){skip_note}")
     print()
 
     session_ok_blocks = 0
