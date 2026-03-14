@@ -78,7 +78,7 @@ python3 ffresque.py copy \
 | `--work-dir` | yes | | Working directory for incomplete files; bad blocks are filled with zeros |
 | `--dst` | yes | | Final destination; files are moved here when fully recovered |
 | `--bad-files` | no | scan `--src` | Text file listing files to recover (paths relative to `--src`, one per line). If omitted, all files in `--src` are processed |
-| `--block-size` | no | 131072 | Read block size in bytes (128K, should match filesystem record size). Do not change, if SQLite database already exists, delete db first, and start from scratch |
+| `--block-size` | no | 131072 | Read block size in bytes (128K, should match filesystem record size). Do not change on re-run, delete database and incomplete files first, and start from scratch |
 | `--db` | no | `blocks.db` | SQLite database for block tracking |
 | `--done-file` | no | `done-files.txt` | File to append fully recovered paths to |
 | `--skip-existing` | no | enabled | Skip files already present in `--dst`; disable with `--no-skip-existing` |
