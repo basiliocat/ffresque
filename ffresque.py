@@ -199,6 +199,18 @@ def human_size(nbytes):
     return f"{nbytes:.1f} PiB"
 
 
+def format_duration(seconds):
+    """Format seconds into a human-readable string."""
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m}m{s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m"
+
+
 # ── Commands ────────────────────────────────────────────────────────
 
 def cmd_copy(args):
@@ -212,16 +224,38 @@ def cmd_copy(args):
 
     conn = open_db(args.db)
     block_size = args.block_size
+    total_files = len(files)
 
     # Track files that were complete before this session
     prev_complete = set()
     for row in conn.execute("SELECT file FROM files WHERE complete = 1"):
         prev_complete.add(row[0])
 
-    total_files = len(files)
+    # Count how many files need work (not yet complete)
+    prev_complete_in_list = sum(1 for f in files if f in prev_complete)
+    files_to_process = total_files - prev_complete_in_list
+
+    # Pre-session stats from DB
+    row = conn.execute(
+        "SELECT "
+        "COALESCE(SUM(ok_blocks), 0), "
+        "COALESCE(SUM(bad_blocks), 0) "
+        "FROM files"
+    ).fetchone()
+    prev_ok_blocks = row[0]
+    prev_bad_blocks = row[1]
+
+    print(f"=== Starting ===")
+    print(f"Files in list: {total_files}")
+    print(f"Already complete: {prev_complete_in_list}")
+    print(f"To process: {files_to_process}")
+    if prev_bad_blocks > 0:
+        print(f"Bad blocks to retry: {prev_bad_blocks} ({human_size(prev_bad_blocks * block_size)})")
+    print()
+
     session_ok_blocks = 0
-    session_bad_blocks = 0
     session_new_complete = []
+    session_files_done = 0
     commit_interval = 100
 
     t0 = time.monotonic()
@@ -234,12 +268,24 @@ def cmd_copy(args):
         session_ok_blocks += ok
         if complete and rel_path not in prev_complete:
             session_new_complete.append(rel_path)
+        if ok > 0 or (complete and rel_path not in prev_complete):
+            session_files_done += 1
 
         if i % commit_interval == 0:
             conn.commit()
             elapsed = time.monotonic() - t0
-            print(f"  [{i}/{total_files}] {elapsed:.0f}s elapsed, "
-                  f"{session_ok_blocks} blocks OK this session", file=sys.stderr)
+            pct = 100.0 * i / total_files
+            # Estimate remaining time
+            if elapsed > 0 and i < total_files:
+                eta = elapsed * (total_files - i) / i
+                eta_str = f", ETA {format_duration(eta)}"
+            else:
+                eta_str = ""
+            print(f"  [{i}/{total_files}] {pct:.0f}% | "
+                  f"{elapsed:.0f}s elapsed{eta_str} | "
+                  f"+{session_ok_blocks} blocks OK, "
+                  f"+{len(session_new_complete)} complete",
+                  file=sys.stderr)
 
     conn.commit()
 
@@ -265,13 +311,15 @@ def cmd_copy(args):
 
     conn.close()
 
+    elapsed = time.monotonic() - t0
+
     # Print summary
     print()
-    print("=== Session Summary ===")
+    print(f"=== Session Summary ({format_duration(elapsed)}) ===")
     print(f"Files processed: {total_files}")
     print(f"Blocks read OK (this session): {session_ok_blocks} ({human_size(session_ok_blocks * block_size)})")
     print(f"Blocks still bad: {db_bad_blocks} ({human_size(db_bad_blocks * block_size)})")
-    print(f"Files fully recovered: {db_complete}")
+    print(f"Files fully recovered: {db_complete}/{db_total_files}")
     print(f"Files with remaining bad blocks: {db_total_files - db_complete}")
     print(f"New files completed this session: {len(session_new_complete)}")
     if session_new_complete:
