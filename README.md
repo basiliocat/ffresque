@@ -21,8 +21,8 @@ find /mnt/damaged -type f > bad-files.txt
 # 2. First run
 python3 ffresque.py copy \
   --src /mnt/damaged \
-  --work-dir /mnt/recovery/work \
-  --dst /mnt/recovery/done \
+  --work-dir /mnt/recovery/incomplete \
+  --dst /mnt/recovery/recovered \
   --bad-files bad-files.txt
 
 # 3. Check progress
@@ -31,8 +31,8 @@ python3 ffresque.py status --db blocks.db
 # 4. Re-run from a different source (retries only bad blocks)
 python3 ffresque.py copy \
   --src /mnt/damaged-disk-b \
-  --work-dir /mnt/recovery/work \
-  --dst /mnt/recovery/done \
+  --work-dir /mnt/recovery/incomplete \
+  --dst /mnt/recovery/recovered \
   --bad-files bad-files.txt \
   --db blocks.db
 ```
@@ -52,6 +52,7 @@ src (damaged media) ──read──▶ work-dir (incomplete files) ──move�
 4. When all blocks of a file become `ok`, the file is moved from `--work-dir` to `--dst`.
 5. On subsequent runs with the same `--db`, only `bad` blocks are retried. This allows recovery from a different copy of the data (e.g. the other half of a mirror).
 6. Paths of newly completed files are appended to `--done-file`.
+7. Files already present in `--dst` are skipped (see `--skip-existing`).
 
 ## Commands
 
@@ -65,18 +66,30 @@ python3 ffresque.py copy \
   --bad-files BAD_FILES \
   [--block-size 131072] \
   [--db blocks.db] \
-  [--done-file done-files.txt]
+  [--done-file done-files.txt] \
+  [--skip-existing | --no-skip-existing] \
+  [--skip-attempted | --no-skip-attempted]
 ```
 
-| Argument | Required | Description |
-|---|---|---|
-| `--src` | yes | Source directory on damaged media |
-| `--work-dir` | yes | Working directory for incomplete files; bad blocks are filled with zeros |
-| `--dst` | yes | Final destination; files are moved here when fully recovered |
-| `--bad-files` | yes | Text file listing damaged files (paths relative to `--src`, one per line) |
-| `--block-size` | no | Read block size in bytes (default: 131072 = 128K) |
-| `--db` | no | SQLite database for block tracking (default: `blocks.db`) |
-| `--done-file` | no | File to append fully recovered paths to (default: `done-files.txt`) |
+| Argument | Required | Default | Description |
+|---|---|---|---|
+| `--src` | yes | | Source directory on damaged media |
+| `--work-dir` | yes | | Working directory for incomplete files; bad blocks are filled with zeros |
+| `--dst` | yes | | Final destination; files are moved here when fully recovered |
+| `--bad-files` | yes | | Text file listing damaged files (paths relative to `--src`, one per line) |
+| `--block-size` | no | 131072 | Read block size in bytes (128K, should match filesystem record size) |
+| `--db` | no | `blocks.db` | SQLite database for block tracking |
+| `--done-file` | no | `done-files.txt` | File to append fully recovered paths to |
+| `--skip-existing` | no | enabled | Skip files already present in `--dst`; disable with `--no-skip-existing` |
+| `--skip-attempted` | no | disabled | Skip files where all blocks have been attempted, even if some are still bad; enable with `--skip-attempted` |
+
+#### `--skip-existing`
+
+Enabled by default. When a file already exists in `--dst`, it is assumed to be fully recovered and skipped entirely. Disable with `--no-skip-existing` to force reprocessing (e.g. if a file in `--dst` was corrupted after recovery).
+
+#### `--skip-attempted`
+
+Disabled by default. When enabled, files where every block has already been read at least once (regardless of whether some are `bad`) are skipped. This is useful when re-running against the **same** source — bad blocks that are permanently unreadable won't be retried. When switching to a **different** source (e.g. another disk from a mirror), keep this flag off so that bad blocks are retried from the new media.
 
 ### `status`
 
@@ -86,16 +99,58 @@ python3 ffresque.py status [--db blocks.db]
 
 Prints recovery statistics from the database: total/complete/damaged file counts, top 10 worst files, and overall recovery rate.
 
+## Output
+
+### Starting banner
+
+```
+=== Starting ===
+Files in list: 4251
+Already complete: 3800
+To process: 451
+Bad blocks to retry: 678 (84.8 MiB)
+```
+
+### Progress (overwrites in-place on TTY)
+
+```
+  [200/4251] 5% | 3m45s, ETA 10m24s | +1234 ok, +56 bad (4.3%), +45 complete
+```
+
+### Session summary
+
+```
+=== Session Summary (12m05s) ===
+Files in list: 4251
+Skipped: 3800
+Blocks read OK (this session): 1234 (154.2 MiB)
+Blocks still bad: 56 (7.0 MiB)
+Files fully recovered: 4195/4251
+Files with remaining bad blocks: 56
+New files completed this session: 395
+  (moved to /mnt/recovery/recovered)
+```
+
 ## Recovery from multiple sources
 
 The main use case for re-runs: a broken mirror where each disk has different bad sectors.
 
 ```bash
-# Source A
-python3 ffresque.py copy --src /mnt/disk-a --work-dir /work --dst /recovered --bad-files bad.txt --db blocks.db
+# Source A — first pass
+python3 ffresque.py copy \
+  --src /mnt/disk-a \
+  --work-dir /mnt/recovery/incomplete \
+  --dst /mnt/recovery/recovered \
+  --bad-files bad.txt \
+  --db blocks.db
 
 # Source B — only retries blocks that failed on disk A
-python3 ffresque.py copy --src /mnt/disk-b --work-dir /work --dst /recovered --bad-files bad.txt --db blocks.db
+python3 ffresque.py copy \
+  --src /mnt/disk-b \
+  --work-dir /mnt/recovery/incomplete \
+  --dst /mnt/recovery/recovered \
+  --bad-files bad.txt \
+  --db blocks.db
 ```
 
 After both runs, files where the two disks had bad blocks at different offsets will be fully recovered.
