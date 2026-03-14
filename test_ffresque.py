@@ -431,3 +431,24 @@ class TestCmdCopy:
 
         zbc.cmd_copy(Args())
         assert "No files" in capsys.readouterr().out
+
+    def test_no_bad_files_scans_src(self, tmp):
+        """Without --bad-files, all files in src are processed."""
+        write_src(tmp, "x.bin", b"X" * 512)
+        write_src(tmp, "sub/y.bin", b"Y" * 256)
+
+        class Args:
+            src = str(tmp.src)
+            work_dir = str(tmp.work)
+            dst = str(tmp.dst)
+            bad_files = None
+            block_size = 1024
+            db = tmp.db
+            done_file = tmp.done
+            skip_existing = True
+            skip_attempted = False
+
+        zbc.cmd_copy(Args())
+
+        assert (tmp.dst / "x.bin").read_bytes() == b"X" * 512
+        assert (tmp.dst / "sub" / "y.bin").read_bytes() == b"Y" * 256

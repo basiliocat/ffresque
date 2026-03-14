@@ -217,13 +217,28 @@ def format_duration(seconds):
 
 # ── Commands ────────────────────────────────────────────────────────
 
+def scan_src(src_dir):
+    """Walk src_dir and return sorted list of relative file paths."""
+    result = []
+    for dirpath, _dirnames, filenames in os.walk(src_dir):
+        for fname in filenames:
+            full = os.path.join(dirpath, fname)
+            result.append(os.path.relpath(full, src_dir))
+    result.sort()
+    return result
+
+
 def cmd_copy(args):
-    # Read bad-files list
-    with open(args.bad_files) as f:
-        files = [line.strip() for line in f if line.strip()]
+    # Build file list
+    if args.bad_files:
+        with open(args.bad_files) as f:
+            files = [line.strip() for line in f if line.strip()]
+    else:
+        print(f"Scanning {args.src} ...", file=sys.stderr)
+        files = scan_src(args.src)
 
     if not files:
-        print("No files in bad-files list.")
+        print("No files to process.")
         return
 
     conn = open_db(args.db)
@@ -450,11 +465,12 @@ def main():
     p_copy = sub.add_parser(
         "copy",
         help="Copy files block-by-block",
-        description="Read each file from --bad-files block-by-block. "
-        "Readable blocks are written to --work-dir, unreadable blocks "
-        "are filled with zeros. When all blocks of a file are OK, "
-        "it is moved from --work-dir to --dst. Block status (ok/bad) "
-        "is stored in --db. On re-run only blocks marked 'bad' are retried.",
+        description="Read files block-by-block (from --bad-files list or all "
+        "files in --src). Readable blocks are written to --work-dir, "
+        "unreadable blocks are filled with zeros. When all blocks of a "
+        "file are OK, it is moved from --work-dir to --dst. Block status "
+        "(ok/bad) is stored in --db. On re-run only blocks marked 'bad' "
+        "are retried.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_copy.add_argument("--src", required=True,
@@ -465,9 +481,10 @@ def main():
     p_copy.add_argument("--dst", required=True,
                         help="Final destination for fully recovered files "
                         "(moved here when no bad blocks remain)")
-    p_copy.add_argument("--bad-files", required=True,
+    p_copy.add_argument("--bad-files", default=None,
                         help="Text file with damaged file paths, one per line, "
-                        "relative to --src")
+                        "relative to --src. If omitted, all files in --src "
+                        "are processed")
     p_copy.add_argument("--block-size", type=int, default=131072,
                         help="Read block size in bytes (default: 131072 = 128K, "
                         "should match ZFS recordsize)")

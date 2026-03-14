@@ -14,11 +14,13 @@ Think of it as [ddrescue](https://www.gnu.org/software/ddrescue/), but operating
 ## Quick start
 
 ```bash
-# 1. Prepare a list of damaged files (relative paths, one per line)
-find /mnt/damaged -type f > bad-files.txt
-# ... or however you generate yours
+# 1. Copy all files from a damaged source
+python3 ffresque.py copy \
+  --src /mnt/damaged \
+  --work-dir /mnt/recovery/incomplete \
+  --dst /mnt/recovery/recovered
 
-# 2. First run
+# 2. Or provide a list of specific files to recover
 python3 ffresque.py copy \
   --src /mnt/damaged \
   --work-dir /mnt/recovery/incomplete \
@@ -33,7 +35,6 @@ python3 ffresque.py copy \
   --src /mnt/damaged-disk-b \
   --work-dir /mnt/recovery/incomplete \
   --dst /mnt/recovery/recovered \
-  --bad-files bad-files.txt \
   --db blocks.db
 ```
 
@@ -63,7 +64,7 @@ python3 ffresque.py copy \
   --src SRC \
   --work-dir WORK_DIR \
   --dst DST \
-  --bad-files BAD_FILES \
+  [--bad-files BAD_FILES] \
   [--block-size 131072] \
   [--db blocks.db] \
   [--done-file done-files.txt] \
@@ -76,7 +77,7 @@ python3 ffresque.py copy \
 | `--src` | yes | | Source directory on damaged media |
 | `--work-dir` | yes | | Working directory for incomplete files; bad blocks are filled with zeros |
 | `--dst` | yes | | Final destination; files are moved here when fully recovered |
-| `--bad-files` | yes | | Text file listing damaged files (paths relative to `--src`, one per line) |
+| `--bad-files` | no | scan `--src` | Text file listing files to recover (paths relative to `--src`, one per line). If omitted, all files in `--src` are processed |
 | `--block-size` | no | 131072 | Read block size in bytes (128K, should match filesystem record size) |
 | `--db` | no | `blocks.db` | SQLite database for block tracking |
 | `--done-file` | no | `done-files.txt` | File to append fully recovered paths to |
