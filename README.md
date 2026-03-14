@@ -64,7 +64,7 @@ python3 ffresque.py copy \
   --src SRC \
   --work-dir WORK_DIR \
   --dst DST \
-  [--bad-files BAD_FILES] \
+  [--bad-files bad-files.txt] \
   [--block-size 131072] \
   [--db blocks.db] \
   [--done-file done-files.txt] \
