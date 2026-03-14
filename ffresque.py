@@ -437,105 +437,64 @@ def cmd_status(args):
 
 # ── CLI ─────────────────────────────────────────────────────────────
 
-EPILOG = """\
-commands:
-  copy     Copy files block-by-block from damaged media
-  status   Show recovery statistics from the database
+USAGE = """\
+ffresque — block-level file rescue from damaged media.
+
+  %(prog)s copy  --src DIR --work-dir DIR --dst DIR [options]
+  %(prog)s status [--db blocks.db]
+
+copy options:
+  --src SRC               Source directory on damaged media
+  --work-dir WORK_DIR     Working directory for incomplete files;
+                          bad blocks are filled with zeros
+  --dst DST               Final destination; files are moved here
+                          when fully recovered
+  --bad-files FILE        List of files to recover (relative to --src,
+                          one per line). If omitted, all files in --src
+  --block-size N          Block size in bytes (default: 131072 = 128K)
+  --db FILE               SQLite database for block tracking
+                          (default: blocks.db)
+  --done-file FILE        Append fully recovered paths here
+                          (default: done-files.txt)
+  --skip-existing         Skip files already in --dst (default: on)
+  --no-skip-existing      Force reprocessing of files in --dst
+  --skip-attempted        Skip files with all blocks already attempted
+  --no-skip-attempted     Retry bad blocks (default: on)
+
+status options:
+  --db FILE               SQLite database path (default: blocks.db)
 
 examples:
-  First run — copy all damaged files:
-    %(prog)s copy \\
-      --src /mnt/damaged/photos \\
-      --work-dir /mnt/rescue/incomplete \\
-      --dst /mnt/rescue/recovered \\
-      --bad-files bad-files.txt
-
-  Re-run from a different disk image (retries only bad blocks):
-    %(prog)s copy \\
-      --src /mnt/damaged/photos \\
-      --work-dir /mnt/rescue/incomplete \\
-      --dst /mnt/rescue/recovered \\
-      --bad-files bad-files.txt \\
-      --db blocks.db
-
-  Check current recovery progress:
-    %(prog)s status --db blocks.db
-
-workflow:
-  1. Generate bad-files.txt (relative paths, one per line)
-  2. Run 'copy' — reads each file block-by-block (128K default)
-     OK blocks go to --work-dir, bad blocks are filled with zeros
-  3. All block statuses are tracked in SQLite (--db)
-  4. When a file has zero bad blocks, it is moved from --work-dir to --dst
-  5. On re-run (same or different source), only 'bad' blocks are retried;
-     if all bad blocks are recovered, the file is moved to --dst
-  6. Fully recovered file paths are also appended to --done-file
-  7. Use 'status' to inspect recovery progress at any time
+  %(prog)s copy --src /mnt/damaged --work-dir /tmp/work --dst /mnt/recovered
+  %(prog)s copy --src /mnt/disk-b --work-dir /tmp/work --dst /mnt/recovered --db blocks.db
+  %(prog)s status --db blocks.db
 """
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ffresque — block-level file rescue from damaged media.",
-        epilog=EPILOG,
+        usage=USAGE,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command")
 
     # copy
-    p_copy = sub.add_parser(
-        "copy",
-        help="Copy files block-by-block",
-        description="Read files block-by-block (from --bad-files list or all "
-        "files in --src). Readable blocks are written to --work-dir, "
-        "unreadable blocks are filled with zeros. When all blocks of a "
-        "file are OK, it is moved from --work-dir to --dst. Block status "
-        "(ok/bad) is stored in --db. On re-run only blocks marked 'bad' "
-        "are retried.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p_copy.add_argument("--src", required=True,
-                        help="Source directory on damaged media")
-    p_copy.add_argument("--work-dir", required=True,
-                        help="Working directory for incomplete files (blocks "
-                        "being recovered); bad blocks are filled with zeros")
-    p_copy.add_argument("--dst", required=True,
-                        help="Final destination for fully recovered files "
-                        "(moved here when no bad blocks remain)")
-    p_copy.add_argument("--bad-files", default=None,
-                        help="Text file with damaged file paths, one per line, "
-                        "relative to --src. If omitted, all files in --src "
-                        "are processed")
-    p_copy.add_argument("--block-size", type=int, default=131072,
-                        help="Read block size in bytes (default: 131072 = 128K, "
-                        "should match ZFS recordsize)")
-    p_copy.add_argument("--db", default="blocks.db",
-                        help="SQLite database for block status tracking "
-                        "(default: blocks.db)")
-    p_copy.add_argument("--done-file", default="done-files.txt",
-                        help="Append fully recovered file paths here "
-                        "(default: done-files.txt)")
+    p_copy = sub.add_parser("copy", help="Copy files block-by-block")
+    p_copy.add_argument("--src", required=True)
+    p_copy.add_argument("--work-dir", required=True)
+    p_copy.add_argument("--dst", required=True)
+    p_copy.add_argument("--bad-files", default=None)
+    p_copy.add_argument("--block-size", type=int, default=131072)
+    p_copy.add_argument("--db", default="blocks.db")
+    p_copy.add_argument("--done-file", default="done-files.txt")
     p_copy.add_argument("--skip-existing", action=argparse.BooleanOptionalAction,
-                        default=True,
-                        help="Skip files already present in --dst "
-                        "(default: enabled)")
+                        default=True)
     p_copy.add_argument("--skip-attempted", action=argparse.BooleanOptionalAction,
-                        default=False,
-                        help="Skip files where all blocks have been attempted "
-                        "(even if some are still bad); useful to avoid re-reading "
-                        "the same source when bad blocks are permanent "
-                        "(default: disabled)")
+                        default=False)
 
     # status
-    p_status = sub.add_parser(
-        "status",
-        help="Show recovery status from DB",
-        description="Print recovery statistics from the SQLite database: "
-        "total/complete/damaged files, top worst files, block counts "
-        "and overall recovery rate.",
-    )
-    p_status.add_argument("--db", default="blocks.db",
-                          help="SQLite database path (default: blocks.db)")
+    p_status = sub.add_parser("status", help="Show recovery status from DB")
+    p_status.add_argument("--db", default="blocks.db")
 
     args = parser.parse_args()
     if args.command == "copy":
@@ -543,7 +502,7 @@ def main():
     elif args.command == "status":
         cmd_status(args)
     else:
-        parser.print_help()
+        parser.print_usage()
         sys.exit(1)
 
 
