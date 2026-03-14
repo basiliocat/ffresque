@@ -92,22 +92,23 @@ def move_to_dst(rel_path, work_dir, dst_dir):
     shutil.move(work_path, dst_path)
 
 
-def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn):
-    """Process a single file. Returns (blocks_ok_session, blocks_bad, newly_complete)."""
+def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn,
+                 skip_existing=True, skip_attempted=False):
+    """Process a single file. Returns (blocks_ok_session, blocks_bad, newly_complete, skipped)."""
     src_path = os.path.join(src_dir, rel_path)
     dst_path = os.path.join(dst_dir, rel_path)
     work_path = os.path.join(work_dir, rel_path)
 
     # If already moved to dst in a previous session, skip
-    if os.path.exists(dst_path):
-        return 0, 0, True
+    if skip_existing and os.path.exists(dst_path):
+        return 0, 0, True, True
 
     # stat source
     try:
         st = os.stat(src_path)
     except FileNotFoundError:
         print(f"  SKIP (not found): {rel_path}", file=sys.stderr)
-        return 0, 0, False
+        return 0, 0, False, True
 
     size = st.st_size
     if size == 0:
@@ -115,13 +116,16 @@ def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn):
         os.makedirs(os.path.dirname(dst_path), exist_ok=True)
         open(dst_path, "ab").close()
         upsert_file(conn, rel_path, 0, 0, 0, 0)
-        return 0, 0, True
+        return 0, 0, True, False
 
     total_blocks = math.ceil(size / block_size)
     existing = get_block_statuses(conn, rel_path)
 
     # Determine which blocks to try
     if existing:
+        # Skip if all blocks have been attempted and flag is set
+        if skip_attempted and len(existing) >= total_blocks:
+            return 0, 0, False, True
         blocks_to_try = [b for b in range(total_blocks) if existing.get(b) != "ok"]
     else:
         blocks_to_try = list(range(total_blocks))
@@ -131,7 +135,7 @@ def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn):
         ok_count = total_blocks
         upsert_file(conn, rel_path, size, total_blocks, ok_count, 0)
         move_to_dst(rel_path, work_dir, dst_dir)
-        return 0, 0, True
+        return 0, 0, True, True
 
     # Ensure work directory exists
     os.makedirs(os.path.dirname(work_path), exist_ok=True)
@@ -188,7 +192,7 @@ def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn):
     if complete:
         move_to_dst(rel_path, work_dir, dst_dir)
 
-    return session_ok, bad_count, complete
+    return session_ok, bad_count, complete, False
 
 
 def human_size(nbytes):
@@ -263,11 +267,19 @@ def cmd_copy(args):
 
     work_dir = args.work_dir
     dst_dir = args.dst
+    skip_existing = args.skip_existing
+    skip_attempted = args.skip_attempted
+    session_skipped = 0
 
     for i, rel_path in enumerate(files, 1):
-        ok, bad, complete = process_file(rel_path, args.src, work_dir, dst_dir, block_size, conn)
+        ok, bad, complete, skipped = process_file(
+            rel_path, args.src, work_dir, dst_dir, block_size, conn,
+            skip_existing=skip_existing, skip_attempted=skip_attempted,
+        )
         session_ok_blocks += ok
         session_bad_blocks += bad
+        if skipped:
+            session_skipped += 1
         if complete and rel_path not in prev_complete:
             session_new_complete.append(rel_path)
 
@@ -322,7 +334,8 @@ def cmd_copy(args):
     # Print summary
     print()
     print(f"=== Session Summary ({format_duration(elapsed)}) ===")
-    print(f"Files processed: {total_files}")
+    print(f"Files in list: {total_files}")
+    print(f"Skipped: {session_skipped}")
     print(f"Blocks read OK (this session): {session_ok_blocks} ({human_size(session_ok_blocks * block_size)})")
     print(f"Blocks still bad: {db_bad_blocks} ({human_size(db_bad_blocks * block_size)})")
     print(f"Files fully recovered: {db_complete}/{db_total_files}")
@@ -445,7 +458,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_copy.add_argument("--src", required=True,
-                        help="Source directory (mounted readonly ZFS dataset)")
+                        help="Source directory on damaged media")
     p_copy.add_argument("--work-dir", required=True,
                         help="Working directory for incomplete files (blocks "
                         "being recovered); bad blocks are filled with zeros")
@@ -464,6 +477,16 @@ def main():
     p_copy.add_argument("--done-file", default="done-files.txt",
                         help="Append fully recovered file paths here "
                         "(default: done-files.txt)")
+    p_copy.add_argument("--skip-existing", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Skip files already present in --dst "
+                        "(default: enabled)")
+    p_copy.add_argument("--skip-attempted", action=argparse.BooleanOptionalAction,
+                        default=False,
+                        help="Skip files where all blocks have been attempted "
+                        "(even if some are still bad); useful to avoid re-reading "
+                        "the same source when bad blocks are permanent "
+                        "(default: disabled)")
 
     # status
     p_status = sub.add_parser(

@@ -53,7 +53,7 @@ class TestBasicCopy:
         write_bad_files(tmp, ["photo.jpg"])
 
         conn = zbc.open_db(tmp.db)
-        ok, bad, complete = zbc.process_file(
+        ok, bad, complete, skipped = zbc.process_file(
             "photo.jpg", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
         )
         conn.commit()
@@ -62,6 +62,7 @@ class TestBasicCopy:
         assert ok == 2
         assert bad == 0
         assert complete is True
+        assert skipped is False
         # File should be in dst (moved from work)
         assert (tmp.dst / "photo.jpg").read_bytes() == data
         assert not (tmp.work / "photo.jpg").exists()
@@ -73,7 +74,7 @@ class TestBasicCopy:
         write_bad_files(tmp, ["file.bin"])
 
         conn = zbc.open_db(tmp.db)
-        ok, bad, complete = zbc.process_file(
+        ok, bad, complete, skipped = zbc.process_file(
             "file.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
         )
         conn.commit()
@@ -89,13 +90,14 @@ class TestBasicCopy:
         write_bad_files(tmp, ["empty.txt"])
 
         conn = zbc.open_db(tmp.db)
-        ok, bad, complete = zbc.process_file(
+        ok, bad, complete, skipped = zbc.process_file(
             "empty.txt", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
         )
         conn.commit()
         conn.close()
 
         assert complete is True
+        assert skipped is False
         assert (tmp.dst / "empty.txt").exists()
         assert (tmp.dst / "empty.txt").stat().st_size == 0
 
@@ -125,12 +127,12 @@ class TestRerun:
         write_src(tmp, "rerun.bin", data)
 
         conn = zbc.open_db(tmp.db)
-        ok1, _, _ = zbc.process_file(
+        ok1, _, _, _ = zbc.process_file(
             "rerun.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
         )
         conn.commit()
 
-        ok2, bad2, complete2 = zbc.process_file(
+        ok2, bad2, complete2, skipped2 = zbc.process_file(
             "rerun.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
         )
         conn.commit()
@@ -140,6 +142,7 @@ class TestRerun:
         # Second run: file already in dst, returns immediately
         assert ok2 == 0
         assert complete2 is True
+        assert skipped2 is True
 
     def test_rerun_retries_bad_blocks(self, tmp):
         """Manually mark a block as bad, then re-run — it should be retried."""
@@ -161,7 +164,7 @@ class TestRerun:
             f.write(b"A" * 1024 + b"\x00" * 1024)
 
         # Re-run: should only retry block 1
-        ok, bad, complete = zbc.process_file(
+        ok, bad, complete, skipped = zbc.process_file(
             "retry.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
         )
         conn.commit()
@@ -170,6 +173,7 @@ class TestRerun:
         assert ok == 1  # only block 1 retried
         assert bad == 0
         assert complete is True
+        assert skipped is False
         assert (tmp.dst / "retry.bin").read_bytes() == data
 
 
@@ -182,35 +186,126 @@ class TestMissingFile:
         write_bad_files(tmp, ["no-such-file.bin"])
 
         conn = zbc.open_db(tmp.db)
-        ok, bad, complete = zbc.process_file(
+        ok, bad, complete, skipped = zbc.process_file(
             "no-such-file.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
         )
         conn.close()
 
         assert ok == 0
         assert complete is False
+        assert skipped is True
         captured = capsys.readouterr()
         assert "SKIP" in captured.err
 
 
-# ── Already in dst ──────────────────────────────────────────────────
+# ── Skip flags ──────────────────────────────────────────────────────
 
 
-class TestAlreadyInDst:
-    def test_file_already_in_dst_skipped(self, tmp):
-        """If file is already in dst, process_file returns immediately."""
+class TestSkipExisting:
+    def test_file_already_in_dst_skipped_by_default(self, tmp):
+        """With skip_existing=True (default), file in dst is skipped."""
         data = b"Z" * 500
         write_src(tmp, "done.bin", data)
-        # Pre-place in dst
         (tmp.dst / "done.bin").write_bytes(data)
 
         conn = zbc.open_db(tmp.db)
-        ok, bad, complete = zbc.process_file(
-            "done.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
+        ok, bad, complete, skipped = zbc.process_file(
+            "done.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn,
+            skip_existing=True,
         )
         conn.close()
 
         assert ok == 0
+        assert complete is True
+        assert skipped is True
+
+    def test_file_in_dst_reprocessed_when_flag_off(self, tmp):
+        """With skip_existing=False, file in dst is reprocessed."""
+        data = b"Z" * 500
+        write_src(tmp, "redo.bin", data)
+        (tmp.dst / "redo.bin").write_bytes(b"\x00" * 500)  # stale copy in dst
+
+        conn = zbc.open_db(tmp.db)
+        ok, bad, complete, skipped = zbc.process_file(
+            "redo.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn,
+            skip_existing=False,
+        )
+        conn.commit()
+        conn.close()
+
+        assert ok == 1
+        assert skipped is False
+
+
+class TestSkipAttempted:
+    def test_all_blocks_attempted_with_bad_skipped(self, tmp):
+        """skip_attempted=True skips files where all blocks were tried."""
+        write_src(tmp, "tried.bin", b"A" * 2048)
+
+        conn = zbc.open_db(tmp.db)
+        # Simulate: 2 blocks, block 0 ok, block 1 bad — all attempted
+        zbc.upsert_block(conn, "tried.bin", 0, "ok")
+        zbc.upsert_block(conn, "tried.bin", 1, "bad")
+        zbc.upsert_file(conn, "tried.bin", 2048, 2, 1, 1)
+        conn.commit()
+
+        ok, bad, complete, skipped = zbc.process_file(
+            "tried.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn,
+            skip_attempted=True,
+        )
+        conn.close()
+
+        assert ok == 0
+        assert skipped is True
+        assert complete is False
+
+    def test_all_blocks_attempted_retried_by_default(self, tmp):
+        """skip_attempted=False (default) retries bad blocks."""
+        data = b"A" * 1024 + b"B" * 1024
+        write_src(tmp, "retry2.bin", data)
+
+        conn = zbc.open_db(tmp.db)
+        zbc.upsert_block(conn, "retry2.bin", 0, "ok")
+        zbc.upsert_block(conn, "retry2.bin", 1, "bad")
+        zbc.upsert_file(conn, "retry2.bin", 2048, 2, 1, 1)
+        conn.commit()
+
+        # Create partial file in work-dir
+        work_path = tmp.work / "retry2.bin"
+        with open(work_path, "wb") as f:
+            f.write(b"A" * 1024 + b"\x00" * 1024)
+
+        ok, bad, complete, skipped = zbc.process_file(
+            "retry2.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn,
+            skip_attempted=False,
+        )
+        conn.commit()
+        conn.close()
+
+        assert ok == 1  # block 1 retried and recovered
+        assert skipped is False
+        assert complete is True
+
+    def test_partially_attempted_not_skipped(self, tmp):
+        """skip_attempted=True does NOT skip if some blocks are unattempted."""
+        data = b"A" * 1024 + b"B" * 1024
+        write_src(tmp, "partial.bin", data)
+
+        conn = zbc.open_db(tmp.db)
+        # Only block 0 attempted, block 1 not in DB yet
+        zbc.upsert_block(conn, "partial.bin", 0, "ok")
+        zbc.upsert_file(conn, "partial.bin", 2048, 2, 1, 0)
+        conn.commit()
+
+        ok, bad, complete, skipped = zbc.process_file(
+            "partial.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn,
+            skip_attempted=True,
+        )
+        conn.commit()
+        conn.close()
+
+        assert ok == 1  # block 1 was read
+        assert skipped is False
         assert complete is True
 
 
@@ -307,6 +402,8 @@ class TestCmdCopy:
             block_size = 1024
             db = tmp.db
             done_file = tmp.done
+            skip_existing = True
+            skip_attempted = False
 
         zbc.cmd_copy(Args())
 
@@ -329,6 +426,8 @@ class TestCmdCopy:
             block_size = 1024
             db = tmp.db
             done_file = tmp.done
+            skip_existing = True
+            skip_attempted = False
 
         zbc.cmd_copy(Args())
         assert "No files" in capsys.readouterr().out
