@@ -289,48 +289,55 @@ def cmd_copy(args):
     skip_attempted = args.skip_attempted
     session_skipped = 0
 
-    for i, rel_path in enumerate(files, 1):
-        ok, bad, complete, skipped = process_file(
-            rel_path, args.src, work_dir, dst_dir, block_size, conn,
-            skip_existing=skip_existing, skip_attempted=skip_attempted,
-        )
-        session_ok_blocks += ok
-        session_bad_blocks += bad
-        if skipped:
-            session_skipped += 1
-        if complete and rel_path not in prev_complete:
-            session_new_complete.append(rel_path)
+    interrupted = False
+    try:
+        for i, rel_path in enumerate(files, 1):
+            ok, bad, complete, skipped = process_file(
+                rel_path, args.src, work_dir, dst_dir, block_size, conn,
+                skip_existing=skip_existing, skip_attempted=skip_attempted,
+            )
+            session_ok_blocks += ok
+            session_bad_blocks += bad
+            if skipped:
+                session_skipped += 1
+            if complete and rel_path not in prev_complete:
+                session_new_complete.append(rel_path)
 
-        if i % commit_interval == 0:
-            conn.commit()
-            now = time.monotonic()
-            elapsed = now - t0
-            pct = 100.0 * i / total_files
+            if i % commit_interval == 0:
+                conn.commit()
+                now = time.monotonic()
+                elapsed = now - t0
+                pct = 100.0 * i / total_files
 
-            # ETA from sliding window
-            eta_window.append((now, i))
-            eta_str = ""
-            if len(eta_window) >= 2 and i < total_files:
-                wt0, wi0 = eta_window[0]
-                dt = now - wt0
-                di = i - wi0
-                if dt > 0 and di > 0:
-                    rate = di / dt  # files per second
-                    eta = (total_files - i) / rate
-                    eta_str = f", ETA {format_duration(eta)}"
+                # ETA from sliding window
+                eta_window.append((now, i))
+                eta_str = ""
+                if len(eta_window) >= 2 and i < total_files:
+                    wt0, wi0 = eta_window[0]
+                    dt = now - wt0
+                    di = i - wi0
+                    if dt > 0 and di > 0:
+                        rate = di / dt  # files per second
+                        eta = (total_files - i) / rate
+                        eta_str = f", ETA {format_duration(eta)}"
 
-            total_session = session_ok_blocks + session_bad_blocks
-            bad_pct = f" ({100.0 * session_bad_blocks / total_session:.1f}%)" if total_session > 0 else ""
-            line = (f"  [{i}/{total_files}] {pct:.0f}% | "
-                    f"{format_duration(elapsed)}{eta_str} | "
-                    f"+{session_ok_blocks} ok, +{session_bad_blocks} bad{bad_pct}, "
-                    f"+{len(session_new_complete)} complete")
-            if is_tty:
-                print(f"\r{line}\033[K", end="", file=sys.stderr)
-            else:
-                print(line, file=sys.stderr)
+                total_session = session_ok_blocks + session_bad_blocks
+                bad_pct = f" ({100.0 * session_bad_blocks / total_session:.1f}%)" if total_session > 0 else ""
+                line = (f"  [{i}/{total_files}] {pct:.0f}% | "
+                        f"{format_duration(elapsed)}{eta_str} | "
+                        f"+{session_ok_blocks} ok, +{session_bad_blocks} bad{bad_pct}, "
+                        f"+{len(session_new_complete)} complete")
+                if is_tty:
+                    print(f"\r{line}\033[K", end="", file=sys.stderr)
+                else:
+                    print(line, file=sys.stderr)
+    except KeyboardInterrupt:
+        interrupted = True
+        if is_tty:
+            print("", file=sys.stderr)
+        print("\nInterrupted — saving progress...", file=sys.stderr)
 
-    if is_tty:
+    if is_tty and not interrupted:
         print("", file=sys.stderr)  # newline after \r progress
 
     conn.commit()
@@ -360,8 +367,9 @@ def cmd_copy(args):
     elapsed = time.monotonic() - t0
 
     # Print summary
+    label = "Interrupted" if interrupted else "Session Summary"
     print()
-    print(f"=== Session Summary ({format_duration(elapsed)}) ===")
+    print(f"=== {label} ({format_duration(elapsed)}) ===")
     print(f"Files in list: {total_files}")
     print(f"Skipped: {session_skipped}")
     print(f"Blocks read OK (this session): {session_ok_blocks} ({human_size(session_ok_blocks * block_size)})")
