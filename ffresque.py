@@ -393,7 +393,7 @@ def cmd_status(args):
     # Top 10 worst files
     worst = conn.execute(
         "SELECT file, bad_blocks, total_blocks FROM files "
-        "WHERE bad_blocks > 0 ORDER BY bad_blocks DESC LIMIT 10"
+        "WHERE bad_blocks > 0 ORDER BY CAST(bad_blocks AS REAL) / total_blocks DESC LIMIT 10"
     ).fetchall()
     if worst:
         print("Top 10 worst files:")
