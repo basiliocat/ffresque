@@ -69,7 +69,7 @@ python3 ffresque.py copy \
   [--db blocks.db] \
   [--done-file done-files.txt] \
   [--skip-existing | --no-skip-existing] \
-  [--skip-attempted | --no-skip-attempted]
+  [--skip-bad-blocks | --no-skip-bad-blocks]
 ```
 
 | Argument | Required | Default | Description |
@@ -82,13 +82,13 @@ python3 ffresque.py copy \
 | `--db` | no | `blocks.db` | SQLite database for block tracking |
 | `--done-file` | no | `done-files.txt` | File to append fully recovered paths to |
 | `--skip-existing` | no | enabled | Skip files already present in `--dst`; disable with `--no-skip-existing` |
-| `--skip-attempted` | no | disabled | Skip files where all blocks have been attempted, even if some are still bad; enable with `--skip-attempted` |
+| `--skip-bad-blocks` | no | disabled | Skip files where all blocks have been attempted, even if some are still bad; enable with `--skip-bad-blocks` |
 
 #### `--skip-existing`
 
 Enabled by default. When a file already exists in `--dst`, it is assumed to be fully recovered and skipped entirely. Disable with `--no-skip-existing` to force reprocessing (e.g. if a file in `--dst` was corrupted after recovery).
 
-#### `--skip-attempted`
+#### `--skip-bad-blocks`
 
 Disabled by default. When enabled, files where every block has already been read at least once (regardless of whether some are `bad`) are skipped. This is useful when re-running against the **same** source — bad blocks that are permanently unreadable won't be retried. When switching to a **different** source (e.g. another disk from a mirror), keep this flag off so that bad blocks are retried from the new media.
 

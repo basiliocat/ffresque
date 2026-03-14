@@ -94,7 +94,7 @@ def move_to_dst(rel_path, work_dir, dst_dir):
 
 
 def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn,
-                 skip_existing=True, skip_attempted=False):
+                 skip_existing=True, skip_bad_blocks=False):
     """Process a single file. Returns (blocks_ok_session, blocks_bad, newly_complete, skipped)."""
     src_path = os.path.join(src_dir, rel_path)
     dst_path = os.path.join(dst_dir, rel_path)
@@ -125,7 +125,7 @@ def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn,
     # Determine which blocks to try
     if existing:
         # Skip if all blocks have been attempted and flag is set
-        if skip_attempted and len(existing) >= total_blocks:
+        if skip_bad_blocks and len(existing) >= total_blocks:
             return 0, 0, False, True
         blocks_to_try = [b for b in range(total_blocks) if existing.get(b) != "ok"]
     else:
@@ -286,7 +286,7 @@ def cmd_copy(args):
     work_dir = args.work_dir
     dst_dir = args.dst
     skip_existing = args.skip_existing
-    skip_attempted = args.skip_attempted
+    skip_bad_blocks = args.skip_bad_blocks
     session_skipped = 0
 
     interrupted = False
@@ -294,7 +294,7 @@ def cmd_copy(args):
         for i, rel_path in enumerate(files, 1):
             ok, bad, complete, skipped = process_file(
                 rel_path, args.src, work_dir, dst_dir, block_size, conn,
-                skip_existing=skip_existing, skip_attempted=skip_attempted,
+                skip_existing=skip_existing, skip_bad_blocks=skip_bad_blocks,
             )
             session_ok_blocks += ok
             session_bad_blocks += bad
@@ -458,8 +458,8 @@ copy options:
                           (default: done-files.txt)
   --skip-existing         Skip files already in --dst (default: on)
   --no-skip-existing      Force reprocessing of files in --dst
-  --skip-attempted        Skip files with all blocks already attempted
-  --no-skip-attempted     Retry bad blocks (default: on)
+  --skip-bad-blocks        Skip files with all blocks already attempted
+  --no-skip-bad-blocks     Retry bad blocks (default: on)
 
 status options:
   --db FILE               SQLite database path (default: blocks.db)
@@ -489,7 +489,7 @@ def main():
     p_copy.add_argument("--done-file", default="done-files.txt")
     p_copy.add_argument("--skip-existing", action=argparse.BooleanOptionalAction,
                         default=True)
-    p_copy.add_argument("--skip-attempted", action=argparse.BooleanOptionalAction,
+    p_copy.add_argument("--skip-bad-blocks", action=argparse.BooleanOptionalAction,
                         default=False)
 
     # status

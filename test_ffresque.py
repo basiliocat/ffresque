@@ -239,7 +239,7 @@ class TestSkipExisting:
 
 class TestSkipAttempted:
     def test_all_blocks_attempted_with_bad_skipped(self, tmp):
-        """skip_attempted=True skips files where all blocks were tried."""
+        """skip_bad_blocks=True skips files where all blocks were tried."""
         write_src(tmp, "tried.bin", b"A" * 2048)
 
         conn = zbc.open_db(tmp.db)
@@ -251,7 +251,7 @@ class TestSkipAttempted:
 
         ok, bad, complete, skipped = zbc.process_file(
             "tried.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn,
-            skip_attempted=True,
+            skip_bad_blocks=True,
         )
         conn.close()
 
@@ -260,7 +260,7 @@ class TestSkipAttempted:
         assert complete is False
 
     def test_all_blocks_attempted_retried_by_default(self, tmp):
-        """skip_attempted=False (default) retries bad blocks."""
+        """skip_bad_blocks=False (default) retries bad blocks."""
         data = b"A" * 1024 + b"B" * 1024
         write_src(tmp, "retry2.bin", data)
 
@@ -277,7 +277,7 @@ class TestSkipAttempted:
 
         ok, bad, complete, skipped = zbc.process_file(
             "retry2.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn,
-            skip_attempted=False,
+            skip_bad_blocks=False,
         )
         conn.commit()
         conn.close()
@@ -287,7 +287,7 @@ class TestSkipAttempted:
         assert complete is True
 
     def test_partially_attempted_not_skipped(self, tmp):
-        """skip_attempted=True does NOT skip if some blocks are unattempted."""
+        """skip_bad_blocks=True does NOT skip if some blocks are unattempted."""
         data = b"A" * 1024 + b"B" * 1024
         write_src(tmp, "partial.bin", data)
 
@@ -299,7 +299,7 @@ class TestSkipAttempted:
 
         ok, bad, complete, skipped = zbc.process_file(
             "partial.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn,
-            skip_attempted=True,
+            skip_bad_blocks=True,
         )
         conn.commit()
         conn.close()
@@ -403,7 +403,7 @@ class TestCmdCopy:
             db = tmp.db
             done_file = tmp.done
             skip_existing = True
-            skip_attempted = False
+            skip_bad_blocks = False
 
         zbc.cmd_copy(Args())
 
@@ -427,7 +427,7 @@ class TestCmdCopy:
             db = tmp.db
             done_file = tmp.done
             skip_existing = True
-            skip_attempted = False
+            skip_bad_blocks = False
 
         zbc.cmd_copy(Args())
         assert "No files" in capsys.readouterr().out
@@ -446,7 +446,7 @@ class TestCmdCopy:
             db = tmp.db
             done_file = tmp.done
             skip_existing = True
-            skip_attempted = False
+            skip_bad_blocks = False
 
         zbc.cmd_copy(Args())
 
