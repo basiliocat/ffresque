@@ -254,9 +254,10 @@ def cmd_copy(args):
     print()
 
     session_ok_blocks = 0
+    session_bad_blocks = 0
     session_new_complete = []
-    session_files_done = 0
     commit_interval = 100
+    is_tty = sys.stderr.isatty()
 
     t0 = time.monotonic()
 
@@ -266,26 +267,31 @@ def cmd_copy(args):
     for i, rel_path in enumerate(files, 1):
         ok, bad, complete = process_file(rel_path, args.src, work_dir, dst_dir, block_size, conn)
         session_ok_blocks += ok
+        session_bad_blocks += bad
         if complete and rel_path not in prev_complete:
             session_new_complete.append(rel_path)
-        if ok > 0 or (complete and rel_path not in prev_complete):
-            session_files_done += 1
 
         if i % commit_interval == 0:
             conn.commit()
             elapsed = time.monotonic() - t0
             pct = 100.0 * i / total_files
-            # Estimate remaining time
             if elapsed > 0 and i < total_files:
-                eta = elapsed * (total_files - i) / i
-                eta_str = f", ETA {format_duration(eta)}"
+                eta_str = f", ETA {format_duration(elapsed * (total_files - i) / i)}"
             else:
                 eta_str = ""
-            print(f"  [{i}/{total_files}] {pct:.0f}% | "
-                  f"{elapsed:.0f}s elapsed{eta_str} | "
-                  f"+{session_ok_blocks} blocks OK, "
-                  f"+{len(session_new_complete)} complete",
-                  file=sys.stderr)
+            total_session = session_ok_blocks + session_bad_blocks
+            bad_pct = f" ({100.0 * session_bad_blocks / total_session:.1f}%)" if total_session > 0 else ""
+            line = (f"  [{i}/{total_files}] {pct:.0f}% | "
+                    f"{format_duration(elapsed)}{eta_str} | "
+                    f"+{session_ok_blocks} ok, +{session_bad_blocks} bad{bad_pct}, "
+                    f"+{len(session_new_complete)} complete")
+            if is_tty:
+                print(f"\r{line}\033[K", end="", file=sys.stderr)
+            else:
+                print(line, file=sys.stderr)
+
+    if is_tty:
+        print("", file=sys.stderr)  # newline after \r progress
 
     conn.commit()
 
