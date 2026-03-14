@@ -342,16 +342,16 @@ commands:
 examples:
   First run — copy all damaged files:
     %(prog)s copy \\
-      --src /mnt/m4t/foto \\
-      --work-dir /mnt/mirr/foto-work \\
-      --dst /mnt/mirr/foto-recovery \\
+      --src /mnt/damaged/photos \\
+      --work-dir /mnt/rescue/incomplete \\
+      --dst /mnt/rescue/recovered \\
       --bad-files bad-files.txt
 
   Re-run from a different disk image (retries only bad blocks):
     %(prog)s copy \\
-      --src /mnt/m4t/foto \\
-      --work-dir /mnt/mirr/foto-work \\
-      --dst /mnt/mirr/foto-recovery \\
+      --src /mnt/damaged/photos \\
+      --work-dir /mnt/rescue/incomplete \\
+      --dst /mnt/rescue/recovered \\
       --bad-files bad-files.txt \\
       --db blocks.db
 
