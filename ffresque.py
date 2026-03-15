@@ -283,6 +283,7 @@ def cmd_copy(args):
     eta_window = collections.deque(maxlen=10)
 
     t0 = time.monotonic()
+    last_progress_time = t0
 
     work_dir = args.work_dir
     dst_dir = args.dst
@@ -304,9 +305,10 @@ def cmd_copy(args):
             if complete and rel_path not in prev_complete:
                 session_new_complete.append(rel_path)
 
-            if i % commit_interval == 0:
+            now = time.monotonic()
+            time_to_report = now - last_progress_time >= 30
+            if i % commit_interval == 0 or time_to_report:
                 conn.commit()
-                now = time.monotonic()
                 elapsed = now - t0
                 pct = 100.0 * i / total_files
 
@@ -332,11 +334,12 @@ def cmd_copy(args):
                     print(f"\r{line}\033[K", end="", file=sys.stderr)
                 else:
                     print(line, file=sys.stderr)
+                last_progress_time = now
     except KeyboardInterrupt:
         interrupted = True
         if is_tty:
             print("", file=sys.stderr)
-        print("\nInterrupted — saving progress...", file=sys.stderr)
+        print(f"\nInterrupted while processing: {rel_path} — saving progress...", file=sys.stderr)
 
     if is_tty and not interrupted:
         print("", file=sys.stderr)  # newline after \r progress
