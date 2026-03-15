@@ -113,8 +113,8 @@ def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn,
     # stat source
     try:
         st = os.stat(src_path)
-    except FileNotFoundError:
-        print(f"  SKIP (not found): {rel_path}", file=sys.stderr)
+    except OSError as e:
+        print(f"  SKIP ({e.strerror}): {rel_path}", file=sys.stderr)
         return 0, 0, False, True
 
     size = st.st_size
