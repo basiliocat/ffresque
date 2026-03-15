@@ -102,6 +102,12 @@ def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn,
 
     # If already moved to dst in a previous session, skip
     if skip_existing and os.path.exists(dst_path):
+        # Ensure file is registered in DB so totals are accurate
+        row = conn.execute("SELECT 1 FROM files WHERE file = ?", (rel_path,)).fetchone()
+        if not row:
+            dst_size = os.path.getsize(dst_path)
+            total_blocks = math.ceil(dst_size / block_size) if dst_size > 0 else 0
+            upsert_file(conn, rel_path, dst_size, total_blocks, total_blocks, 0)
         return 0, 0, True, True
 
     # stat source
