@@ -123,7 +123,10 @@ def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn,
     try:
         st = os.stat(src_path)
     except OSError as e:
-        print(f"  SKIP ({e.strerror}): {rel_path}", file=sys.stderr)
+        if sys.stderr.isatty():
+            print(f"\r\033[K  SKIP ({e.strerror}): {rel_path}", file=sys.stderr)
+        else:
+            print(f"  SKIP ({e.strerror}): {rel_path}", file=sys.stderr)
         return 0, 0, False, True
 
     size = st.st_size
