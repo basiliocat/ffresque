@@ -110,6 +110,15 @@ def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn,
             upsert_file(conn, rel_path, dst_size, total_blocks, total_blocks, 0)
         return 0, 0, True, True
 
+    # If DB already knows this file is complete, just move without touching src
+    db_row = conn.execute(
+        "SELECT size, total_blocks FROM files WHERE file = ? AND complete = 1",
+        (rel_path,),
+    ).fetchone()
+    if db_row:
+        move_to_dst(rel_path, work_dir, dst_dir)
+        return 0, 0, True, True
+
     # stat source
     try:
         st = os.stat(src_path)
