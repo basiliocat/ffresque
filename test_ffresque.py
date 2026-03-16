@@ -423,6 +423,7 @@ class TestCmdCopy:
             done_file = tmp.done
             skip_existing = True
             skip_bad_blocks = False
+            skip = 0
 
         zbc.cmd_copy(Args())
 
@@ -447,6 +448,7 @@ class TestCmdCopy:
             done_file = tmp.done
             skip_existing = True
             skip_bad_blocks = False
+            skip = 0
 
         zbc.cmd_copy(Args())
         assert "No files" in capsys.readouterr().out
@@ -466,6 +468,7 @@ class TestCmdCopy:
             done_file = tmp.done
             skip_existing = True
             skip_bad_blocks = False
+            skip = 0
 
         zbc.cmd_copy(Args())
 
@@ -487,6 +490,7 @@ class TestCmdCopy:
             done_file = tmp.done
             skip_existing = True
             skip_bad_blocks = False
+            skip = 0
 
         zbc.cmd_copy(Args())
         zbc.cmd_copy(Args())

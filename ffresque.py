@@ -253,6 +253,9 @@ def cmd_copy(args):
         print(f"Scanning {args.src} ...", file=sys.stderr)
         files = scan_src(args.src)
 
+    if args.skip > 0:
+        files = files[args.skip:]
+
     if not files:
         print("No files to process.")
         return
@@ -479,6 +482,7 @@ copy options:
   --no-skip-existing      Force reprocessing of files in --dst
   --skip-bad-blocks        Skip files with all blocks already attempted
   --no-skip-bad-blocks     Retry bad blocks (default: on)
+  --skip N                 Skip first N files in the list
 
 status options:
   --db FILE               SQLite database path (default: blocks.db)
@@ -510,6 +514,8 @@ def main():
                         default=True)
     p_copy.add_argument("--skip-bad-blocks", action=argparse.BooleanOptionalAction,
                         default=False)
+    p_copy.add_argument("--skip", type=int, default=0, metavar="N",
+                        help="Skip first N files in the list")
 
     # status
     p_status = sub.add_parser("status", help="Show recovery status from DB")
