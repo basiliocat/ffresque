@@ -495,9 +495,13 @@ examples:
 
 
 def main():
+    kwargs = {}
+    if sys.version_info >= (3, 14):
+        kwargs["color"] = False
     parser = argparse.ArgumentParser(
         usage=USAGE,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        **kwargs,
     )
     sub = parser.add_subparsers(dest="command")
 
