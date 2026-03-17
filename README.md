@@ -52,7 +52,7 @@ src (damaged media) ──read──▶ work-dir (incomplete files) ──move�
 1. Each file from `--bad-files` is read in `--block-size` chunks (default 128K).
 2. Readable blocks are written to `--work-dir`, preserving the directory structure. Unreadable blocks are filled with zeros.
 3. Block status (`ok` or `bad`) is stored in a SQLite database (`--db`).
-4. When all blocks of a file become `ok`, the file is moved from `--work-dir` to `--dst`.
+4. When all blocks of a file become `ok`, the file is moved from `--work-dir` to `--dst`. File metadata (mtime, permissions, ownership) is preserved from the source.
 5. On subsequent runs with the same `--db`, only `bad` blocks are retried. This allows recovery from a different copy of the data (e.g. the other half of a mirror).
 6. Paths of newly completed files are appended to `--done-file`.
 7. Files already present in `--dst` are skipped (see `--skip-existing`).
@@ -71,7 +71,8 @@ python3 ffresque.py copy \
   [--db blocks.db] \
   [--done-file done-files.txt] \
   [--skip-existing | --no-skip-existing] \
-  [--skip-bad-blocks | --no-skip-bad-blocks]
+  [--skip-bad-blocks | --no-skip-bad-blocks] \
+  [--no-times] [--no-perms] [--no-owner]
 ```
 
 | Argument | Required | Default | Description |
@@ -85,6 +86,15 @@ python3 ffresque.py copy \
 | `--done-file` | no | `done-files.txt` | File to append fully recovered paths to |
 | `--skip-existing` | no | enabled | Skip files already present in `--dst`; disable with `--no-skip-existing` |
 | `--skip-bad-blocks` | no | disabled | Skip files where all blocks have been attempted, even if some are still bad; enable with `--skip-bad-blocks` |
+| `--no-times` | no | off | Do not preserve mtime/atime from the source |
+| `--no-perms` | no | off | Do not preserve file permissions (mode) from the source |
+| `--no-owner` | no | off | Do not preserve uid/gid ownership from the source (chown requires root) |
+
+#### Metadata preservation
+
+By default, ffresque copies the source file's modification time (mtime), permissions (mode), and ownership (uid/gid) to both the work file and the final destination. Ownership requires root; if `chown` fails, the error is silently ignored.
+
+Use `--no-times`, `--no-perms`, or `--no-owner` to disable individual attributes.
 
 #### `--skip-existing`
 
@@ -138,6 +148,33 @@ After both runs, files where the two disks had bad blocks at different offsets w
 - **Partial file recovery** — even if some blocks are permanently lost, the rest of the file is saved. For media files (JPEG, MP4) this often means most of the content is still usable.
 - **Combining multiple backup copies** — you have several old backups of the same directory tree, each with different corruptions. Run ffresque against each source to assemble the most complete version.
 - **Pre-migration rescue** — before decommissioning an old server or array, copy everything off with block-level tracking so you know exactly what was and wasn't recovered.
+
+## Utilities
+
+### `fix_mtime.py`
+
+Retroactively restores metadata (mtime, permissions, ownership) on files that were recovered before metadata preservation was added to ffresque. Walks `--dst` and `--work-dir`, finds matching files in `--src`, and applies the source metadata.
+
+```bash
+# Dry run — see what would change
+python3 fix_mtime.py --src /mnt/damaged --dst /mnt/recovered --work-dir /tmp/work --dry-run
+
+# Apply
+python3 fix_mtime.py --src /mnt/damaged --dst /mnt/recovered --work-dir /tmp/work
+
+# Only fix times, skip permissions and ownership
+python3 fix_mtime.py --src /mnt/damaged --dst /mnt/recovered --no-perms --no-owner
+```
+
+| Argument | Required | Default | Description |
+|---|---|---|---|
+| `--src` | yes | | Source directory (original files) |
+| `--dst` | yes | | Destination directory (fully recovered files) |
+| `--work-dir` | no | | Work directory (incomplete files) |
+| `--dry-run` | no | off | Show what would be changed without applying |
+| `--no-times` | no | off | Do not restore mtime/atime |
+| `--no-perms` | no | off | Do not restore file permissions (mode) |
+| `--no-owner` | no | off | Do not restore uid/gid ownership |
 
 ## Testing
 

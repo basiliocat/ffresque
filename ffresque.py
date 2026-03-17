@@ -81,9 +81,28 @@ def upsert_file(conn, rel_path, size, total_blocks, ok_blocks, bad_blocks):
     return complete == 1
 
 
+# ── Metadata helpers ───────────────────────────────────────────────
+
+def apply_metadata(path, st, *, times=True, perms=True, owner=True):
+    """Copy times/permissions/ownership from stat result to path."""
+    if times:
+        os.utime(path, (st.st_atime, st.st_mtime))
+    if perms:
+        try:
+            os.chmod(path, st.st_mode)
+        except OSError:
+            pass
+    if owner:
+        try:
+            os.chown(path, st.st_uid, st.st_gid)
+        except OSError:
+            pass
+
+
 # ── Copy logic ──────────────────────────────────────────────────────
 
-def move_to_dst(rel_path, work_dir, dst_dir):
+def move_to_dst(rel_path, work_dir, dst_dir, st=None,
+                times=True, perms=True, owner=True):
     """Move a fully recovered file from work_dir to dst_dir."""
     work_path = os.path.join(work_dir, rel_path)
     dst_path = os.path.join(dst_dir, rel_path)
@@ -91,10 +110,13 @@ def move_to_dst(rel_path, work_dir, dst_dir):
         return
     os.makedirs(os.path.dirname(dst_path), exist_ok=True)
     shutil.move(work_path, dst_path)
+    if st is not None:
+        apply_metadata(dst_path, st, times=times, perms=perms, owner=owner)
 
 
 def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn,
-                 skip_existing=True, skip_bad_blocks=False):
+                 skip_existing=True, skip_bad_blocks=False,
+                 preserve_times=True, preserve_perms=True, preserve_owner=True):
     """Process a single file. Returns (blocks_ok_session, blocks_bad, newly_complete, skipped)."""
     src_path = os.path.join(src_dir, rel_path)
     dst_path = os.path.join(dst_dir, rel_path)
@@ -134,6 +156,8 @@ def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn,
         # empty file — move straight to dst
         os.makedirs(os.path.dirname(dst_path), exist_ok=True)
         open(dst_path, "ab").close()
+        apply_metadata(dst_path, st, times=preserve_times,
+                       perms=preserve_perms, owner=preserve_owner)
         upsert_file(conn, rel_path, 0, 0, 0, 0)
         return 0, 0, True, False
 
@@ -153,7 +177,8 @@ def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn,
         # All blocks already ok — move if still in work_dir
         ok_count = total_blocks
         upsert_file(conn, rel_path, size, total_blocks, ok_count, 0)
-        move_to_dst(rel_path, work_dir, dst_dir)
+        move_to_dst(rel_path, work_dir, dst_dir, st=st,
+                    times=preserve_times, perms=preserve_perms, owner=preserve_owner)
         return 0, 0, True, True
 
     # Ensure work directory exists
@@ -192,6 +217,8 @@ def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn,
                     upsert_block(conn, rel_path, bnum, "bad")
         finally:
             os.close(fd_dst)
+        apply_metadata(work_path, st, times=preserve_times,
+                       perms=preserve_perms, owner=preserve_owner)
     finally:
         os.close(fd_src)
 
@@ -209,7 +236,8 @@ def process_file(rel_path, src_dir, work_dir, dst_dir, block_size, conn,
 
     # If fully recovered, move from work to dst
     if complete:
-        move_to_dst(rel_path, work_dir, dst_dir)
+        move_to_dst(rel_path, work_dir, dst_dir, st=st,
+                    times=preserve_times, perms=preserve_perms, owner=preserve_owner)
 
     return session_ok, bad_count, complete, False
 
@@ -310,6 +338,9 @@ def cmd_copy(args):
     dst_dir = args.dst
     skip_existing = args.skip_existing
     skip_bad_blocks = args.skip_bad_blocks
+    preserve_times = not args.no_times
+    preserve_perms = not args.no_perms
+    preserve_owner = not args.no_owner
     session_skipped = 0
 
     interrupted = False
@@ -318,6 +349,8 @@ def cmd_copy(args):
             ok, bad, complete, skipped = process_file(
                 rel_path, args.src, work_dir, dst_dir, block_size, conn,
                 skip_existing=skip_existing, skip_bad_blocks=skip_bad_blocks,
+                preserve_times=preserve_times, preserve_perms=preserve_perms,
+                preserve_owner=preserve_owner,
             )
             session_ok_blocks += ok
             session_bad_blocks += bad
@@ -486,6 +519,9 @@ copy options:
   --skip-bad-blocks        Skip files with all blocks already attempted
   --no-skip-bad-blocks     Retry bad blocks (default: on)
   --skip N                 Skip first N files in the list
+  --no-times               Do not preserve mtime/atime
+  --no-perms               Do not preserve file permissions (mode)
+  --no-owner               Do not preserve uid/gid ownership
 
 status options:
   --db FILE               SQLite database path (default: blocks.db)
@@ -523,6 +559,12 @@ def main():
                         default=False)
     p_copy.add_argument("--skip", type=int, default=0, metavar="N",
                         help="Skip first N files in the list")
+    p_copy.add_argument("--no-times", action="store_true", default=False,
+                        help="Do not preserve mtime/atime")
+    p_copy.add_argument("--no-perms", action="store_true", default=False,
+                        help="Do not preserve file permissions")
+    p_copy.add_argument("--no-owner", action="store_true", default=False,
+                        help="Do not preserve uid/gid ownership")
 
     # status
     p_status = sub.add_parser("status", help="Show recovery status from DB")

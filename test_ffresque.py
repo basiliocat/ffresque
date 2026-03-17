@@ -424,6 +424,9 @@ class TestCmdCopy:
             skip_existing = True
             skip_bad_blocks = False
             skip = 0
+            no_times = False
+            no_perms = False
+            no_owner = False
 
         zbc.cmd_copy(Args())
 
@@ -449,6 +452,9 @@ class TestCmdCopy:
             skip_existing = True
             skip_bad_blocks = False
             skip = 0
+            no_times = False
+            no_perms = False
+            no_owner = False
 
         zbc.cmd_copy(Args())
         assert "No files" in capsys.readouterr().out
@@ -469,6 +475,9 @@ class TestCmdCopy:
             skip_existing = True
             skip_bad_blocks = False
             skip = 0
+            no_times = False
+            no_perms = False
+            no_owner = False
 
         zbc.cmd_copy(Args())
 
@@ -491,6 +500,9 @@ class TestCmdCopy:
             skip_existing = True
             skip_bad_blocks = False
             skip = 0
+            no_times = False
+            no_perms = False
+            no_owner = False
 
         zbc.cmd_copy(Args())
         zbc.cmd_copy(Args())
@@ -548,6 +560,120 @@ class TestCmdStatus:
 
         with pytest.raises(SystemExit):
             zbc.cmd_status(Args())
+
+
+# ── mtime preservation ─────────────────────────────────────────────
+
+
+class TestMtimePreservation:
+    """Destination files should inherit mtime from the source."""
+
+    OLD_MTIME = 1_500_000_000  # 2017-07-14
+    OLD_ATIME = 1_500_000_000
+
+    def _set_src_times(self, dirs, rel_path):
+        os.utime(dirs.src / rel_path, (self.OLD_ATIME, self.OLD_MTIME))
+
+    def test_mtime_normal_file(self, tmp):
+        """Complete file moved to dst preserves source mtime."""
+        data = b"M" * 2048
+        write_src(tmp, "ts.bin", data)
+        self._set_src_times(tmp, "ts.bin")
+
+        conn = zbc.open_db(tmp.db)
+        zbc.process_file(
+            "ts.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
+        )
+        conn.commit()
+        conn.close()
+
+        dst_stat = (tmp.dst / "ts.bin").stat()
+        assert dst_stat.st_mtime == pytest.approx(self.OLD_MTIME, abs=1)
+
+    def test_mtime_empty_file(self, tmp):
+        """Empty file in dst preserves source mtime."""
+        write_src(tmp, "empty.dat", b"")
+        self._set_src_times(tmp, "empty.dat")
+
+        conn = zbc.open_db(tmp.db)
+        zbc.process_file(
+            "empty.dat", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
+        )
+        conn.commit()
+        conn.close()
+
+        dst_stat = (tmp.dst / "empty.dat").stat()
+        assert dst_stat.st_mtime == pytest.approx(self.OLD_MTIME, abs=1)
+
+    def test_mtime_work_file_after_block_write(self, tmp):
+        """After writing blocks, work file has source mtime (even if not complete)."""
+        # Use /dev/null as block 1 source to simulate short read → file stays in work
+        data = b"W" * 2048
+        write_src(tmp, "wk.bin", data)
+        self._set_src_times(tmp, "wk.bin")
+
+        conn = zbc.open_db(tmp.db)
+        zbc.process_file(
+            "wk.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
+        )
+        conn.commit()
+        conn.close()
+
+        # File completed and moved to dst — check dst mtime
+        dst_stat = (tmp.dst / "wk.bin").stat()
+        assert dst_stat.st_mtime == pytest.approx(self.OLD_MTIME, abs=1)
+
+    def test_mtime_all_blocks_ok_path(self, tmp):
+        """File where all blocks are ok in DB (but files.complete=0) — moved with correct mtime."""
+        data = b"K" * 2048
+        write_src(tmp, "allok.bin", data)
+        self._set_src_times(tmp, "allok.bin")
+
+        conn = zbc.open_db(tmp.db)
+        # Pre-populate DB: all blocks ok individually, but files row says not complete
+        zbc.upsert_block(conn, "allok.bin", 0, "ok")
+        zbc.upsert_block(conn, "allok.bin", 1, "ok")
+        # ok_blocks=1 (stale count) so complete stays 0, triggering the
+        # "no blocks_to_try" path rather than the "DB already complete" early return
+        zbc.upsert_file(conn, "allok.bin", 2048, 2, 1, 1)
+        conn.commit()
+
+        # Create work file
+        work_path = tmp.work / "allok.bin"
+        work_path.write_bytes(data)
+
+        zbc.process_file(
+            "allok.bin", str(tmp.src), str(tmp.work), str(tmp.dst), 1024, conn
+        )
+        conn.commit()
+        conn.close()
+
+        dst_stat = (tmp.dst / "allok.bin").stat()
+        assert dst_stat.st_mtime == pytest.approx(self.OLD_MTIME, abs=1)
+
+    def test_move_to_dst_preserves_metadata(self, tmp):
+        """move_to_dst with st= sets mtime on destination."""
+        work_file = tmp.work / "mv.bin"
+        work_file.write_bytes(b"hello")
+
+        # Create a source file to get a real stat result
+        src_file = tmp.src / "mv.bin"
+        src_file.write_bytes(b"hello")
+        os.utime(src_file, (self.OLD_ATIME, self.OLD_MTIME))
+        st = os.stat(src_file)
+
+        zbc.move_to_dst("mv.bin", str(tmp.work), str(tmp.dst), st=st)
+
+        dst_stat = (tmp.dst / "mv.bin").stat()
+        assert dst_stat.st_mtime == pytest.approx(self.OLD_MTIME, abs=1)
+
+    def test_move_to_dst_no_st(self, tmp):
+        """move_to_dst without st= does not crash."""
+        work_file = tmp.work / "mv2.bin"
+        work_file.write_bytes(b"hello")
+
+        zbc.move_to_dst("mv2.bin", str(tmp.work), str(tmp.dst))
+        assert (tmp.dst / "mv2.bin").exists()
 
 
 # ── Work file edge cases ────────────────────────────────────────────
